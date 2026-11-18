@@ -1,124 +1,222 @@
-// The game's rules and state, with no drawing and no browser in it: the player's paddle, the
-// pool of falling blocks and coins, spawning, collisions, score, lives and level. step() advances
-// one fixed step and returns what happened as bit flags, so the caller can react without the
-// world knowing about screens or sound. Nothing here allocates after createWorld returns.
-import { BLOCK, COIN, FIELD, LEVEL, LIVES, PLAYER, POOL_SIZE } from './config.js';
+// The city of Velmora: a road grid over a square map, blocks holding
+// buildings, a beach and water along the south shore, a pier, and the named
+// places the story visits. No drawing here — only the layout, the collision
+// tests and the spawn points the other modules ask for.
 
-export const KIND_BLOCK = 0;
-export const KIND_COIN = 1;
+import { PALETTE, PLACES, WORLD } from './config.js';
 
-export const EVENT_HIT = 1;
-export const EVENT_COIN = 2;
-export const EVENT_OVER = 4;
+const ROAD_HALF = WORLD.road / 2;
+// Road centrelines sit on the grid lines of the block pitch.
+const PITCH = WORLD.block + WORLD.road;
 
-function overlaps(a, b) {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+// All road centrelines, from the north edge to the south.
+function roadCentres() {
+  const lines = [];
+  for (let c = ROAD_HALF; c <= WORLD.size; c += PITCH) lines.push(c);
+  return lines;
 }
 
-export function createWorld(random) {
-  const player = { x: 0, y: FIELD.groundY - PLAYER.height, width: PLAYER.width, height: PLAYER.height, invulnerable: 0 };
-  const items = [];
-  for (let index = 0; index < POOL_SIZE; index += 1) {
-    items.push({ active: false, kind: KIND_BLOCK, x: 0, y: 0, width: 0, height: 0, speed: 0 });
+function isOnRoad(x, y) {
+  if (x < 0 || y < 0 || x > WORLD.size || y > WORLD.size) return false;
+  for (const c of roadCentres()) {
+    if (Math.abs(x - c) <= ROAD_HALF || Math.abs(y - c) <= ROAD_HALF) return true;
   }
-  const state = { player, items, score: 0, lives: LIVES, level: 1, elapsed: 0, blockTimer: 0, coinTimer: 0 };
-
-  function reset() {
-    player.x = (FIELD.width - player.width) / 2;
-    player.invulnerable = 0;
-    for (const item of items) item.active = false;
-    state.score = 0;
-    state.lives = LIVES;
-    state.level = 1;
-    state.elapsed = 0;
-    state.blockTimer = BLOCK.interval;
-    state.coinTimer = COIN.interval;
-  }
-
-  function freeItem() {
-    for (let index = 0; index < items.length; index += 1) if (!items[index].active) return items[index];
-    return null;
-  }
-
-  function spawnBlock() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_BLOCK;
-    item.width = BLOCK.minWidth + random() * (BLOCK.maxWidth - BLOCK.minWidth);
-    item.height = BLOCK.height;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = BLOCK.speed + BLOCK.speedPerLevel * (state.level - 1) + random() * BLOCK.speedJitter;
-  }
-
-  function spawnCoin() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_COIN;
-    item.width = COIN.size;
-    item.height = COIN.size;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = COIN.speed + COIN.speedPerLevel * (state.level - 1);
-  }
-
-  function blockInterval() {
-    return Math.max(BLOCK.minInterval, BLOCK.interval * BLOCK.intervalScale ** (state.level - 1));
-  }
-
-  /**
-   * One fixed step. `direction` is -1, 0 or 1 (left, still, right). With `harmless` set (the title
-   * screen's backdrop) things fall but nothing touches the player and nothing scores.
-   */
-  function step(dt, direction, harmless) {
-    let events = 0;
-    state.elapsed += dt;
-    state.level = Math.min(LEVEL.max, 1 + Math.floor(state.elapsed / LEVEL.seconds));
-
-    player.x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * dt));
-    if (player.invulnerable > 0) player.invulnerable = Math.max(0, player.invulnerable - dt);
-
-    state.blockTimer -= dt;
-    if (state.blockTimer <= 0) {
-      spawnBlock();
-      state.blockTimer += blockInterval();
-    }
-    state.coinTimer -= dt;
-    if (state.coinTimer <= 0) {
-      spawnCoin();
-      state.coinTimer += COIN.interval + random() * COIN.intervalJitter;
-    }
-
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      item.y += item.speed * dt;
-      if (item.y > FIELD.groundY) {
-        item.active = false;
-        if (item.kind === KIND_BLOCK && !harmless) state.score += BLOCK.dodgePoints;
-        continue;
-      }
-      if (harmless || !overlaps(item, player)) continue;
-      if (item.kind === KIND_COIN) {
-        item.active = false;
-        state.score += COIN.points;
-        events |= EVENT_COIN;
-      } else if (player.invulnerable === 0) {
-        item.active = false;
-        state.lives -= 1;
-        player.invulnerable = PLAYER.invulnerable;
-        events |= EVENT_HIT;
-        if (state.lives === 0) {
-          events |= EVENT_OVER;
-          break;
-        }
-      }
-    }
-    return events;
-  }
-
-  reset();
-  return { state, reset, step };
+  return false;
 }
+
+// True when a rectangle reaches onto a road (with a little clearance).
+function rectOverlapsRoad(rect) {
+  const pad = ROAD_HALF + 6;
+  for (const c of roadCentres()) {
+    if (rect.x < c + pad && rect.x + rect.w > c - pad) return true;
+    if (rect.y < c + pad && rect.y + rect.h > c - pad) return true;
+  }
+  return false;
+}
+
+// True when two rectangles overlap with the given clearance between them.
+function overlapsPadded(a, b, pad) {
+  return a.x < b.x + b.w + pad && a.x + a.w + pad > b.x
+    && a.y < b.y + b.h + pad && a.y + a.h + pad > b.y;
+}
+
+/** Build the city from a seeded random: blocks, buildings, palms, landmarks. */
+export function buildCity(random) {
+  const lines = roadCentres();
+  const buildings = [];
+  const palms = [];
+  const blocks = [];
+
+  // Each block between four roads gets one to three buildings.
+  for (let bx = 0; bx < lines.length - 1; bx += 1) {
+    for (let by = 0; by < lines.length - 1; by += 1) {
+      const x0 = lines[bx] + ROAD_HALF + 10;
+      const y0 = lines[by] + ROAD_HALF + 10;
+      const x1 = lines[bx + 1] - ROAD_HALF - 10;
+      const y1 = lines[by + 1] - ROAD_HALF - 10;
+      if (y0 > WORLD.beachY) continue; // the beach strip holds no buildings
+      blocks.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+      const count = random.int(1, 4);
+      for (let n = 0; n < count; n += 1) {
+        const w = random.range(70, 150);
+        const h = random.range(60, 130);
+        const x = random.range(x0, Math.max(x0 + 1, x1 - w));
+        const y = random.range(y0, Math.max(y0 + 1, y1 - h));
+        const rect = { x, y, w, h };
+        if (buildings.some((b) => overlapsPadded(rect, b, 14))) continue;
+        buildings.push({
+          ...rect,
+          roof: random.pick(PALETTE.buildingRoof),
+          height: random.int(1, 4),
+          landmark: null,
+        });
+      }
+      // Palms along the block's edges.
+      const palmsHere = random.int(0, 3);
+      for (let n = 0; n < palmsHere; n += 1) {
+        palms.push({ x: random.range(x0, x1), y: random.range(y0, y1) });
+      }
+    }
+  }
+
+  // Landmarks: big buildings at the named places, drawn over the small ones.
+  const landmarks = [
+    { place: 'casino', w: 190, h: 130, roof: '#d9a05b' },
+    { place: 'market', w: 170, h: 110, roof: '#5f8f6a' },
+    { place: 'garage', w: 150, h: 100, roof: '#7d9bb5' },
+    { place: 'safehouse', w: 110, h: 90, roof: '#a8709e' },
+    { place: 'police', w: 150, h: 110, roof: '#1c3a6e' },
+    { place: 'hospital', w: 170, h: 120, roof: '#e8e8e8' },
+  ];
+  for (const mark of landmarks) {
+    const at = PLACES[mark.place];
+    let rect = { x: at.x - mark.w / 2, y: at.y - mark.h / 2, w: mark.w, h: mark.h };
+    if (rectOverlapsRoad(rect)) {
+      // A landmark must never sit on a street: move it to its block's centre.
+      let cx = at.x;
+      let cy = at.y;
+      for (let i = 0; i < lines.length - 1; i += 1) {
+        if (at.x > lines[i] && at.x < lines[i + 1]) cx = (lines[i] + lines[i + 1]) / 2;
+        if (at.y > lines[i] && at.y < lines[i + 1]) cy = (lines[i] + lines[i + 1]) / 2;
+      }
+      rect = { x: cx - mark.w / 2, y: cy - mark.h / 2, w: mark.w, h: mark.h };
+    }
+    for (let i = buildings.length - 1; i >= 0; i -= 1) {
+      const b = buildings[i];
+      if (rect.x < b.x + b.w && rect.x + rect.w > b.x && rect.y < b.y + b.h && rect.y + rect.h > b.y) {
+        buildings.splice(i, 1);
+      }
+    }
+    buildings.push({ ...rect, roof: mark.roof, height: 2, landmark: mark.place });
+  }
+
+  // The airfield: a runway strip in the north-east corner, no buildings on it.
+  const runway = { x: 2100, y: 330, w: 420, h: 90 };
+  for (let i = buildings.length - 1; i >= 0; i -= 1) {
+    const b = buildings[i];
+    if (runway.x < b.x + b.w && runway.x + runway.w > b.x && runway.y < b.y + b.h && runway.y + runway.h > b.y) {
+      buildings.splice(i, 1);
+    }
+  }
+
+  return { lines, buildings, palms, blocks, runway };
+}
+
+/** True when the point is inside a building, in the water, or outside the map. */
+export function solidAt(city, x, y) {
+  if (x < 8 || y < 8 || x > WORLD.size - 8 || y > WORLD.size - 8) return true;
+  if (y > WORLD.waterY) return true;
+  for (const b of city.buildings) {
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return true;
+  }
+  return false;
+}
+
+/** Push a circle out of whatever solid it overlaps; returns true when it moved. */
+export function resolveCircle(city, body) {
+  let moved = false;
+  const r = body.radius;
+  if (body.y > WORLD.waterY - r) {
+    body.y = WORLD.waterY - r;
+    moved = true;
+  }
+  for (const b of city.buildings) {
+    const cx = Math.max(b.x, Math.min(body.x, b.x + b.w));
+    const cy = Math.max(b.y, Math.min(body.y, b.y + b.h));
+    const dx = body.x - cx;
+    const dy = body.y - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < r * r && d2 > 0.0001) {
+      const d = Math.sqrt(d2);
+      body.x = cx + (dx / d) * r;
+      body.y = cy + (dy / d) * r;
+      moved = true;
+    } else if (d2 <= 0.0001 && body.x >= b.x && body.x <= b.x + b.w && body.y >= b.y && body.y <= b.y + b.h) {
+      body.y = b.y - r;
+      moved = true;
+    }
+  }
+  if (body.x < r) {
+    body.x = r;
+    moved = true;
+  }
+  if (body.x > WORLD.size - r) {
+    body.x = WORLD.size - r;
+    moved = true;
+  }
+  if (body.y < r) {
+    body.y = r;
+    moved = true;
+  }
+  return moved;
+}
+
+// The road centreline nearest a coordinate.
+function nearestLine(value) {
+  const lines = roadCentres();
+  let best = lines[0];
+  let bestD = Infinity;
+  for (const c of lines) {
+    const d = Math.abs(value - c);
+    if (d < bestD) {
+      bestD = d;
+      best = c;
+    }
+  }
+  return best;
+}
+
+/** The nearest point on a road to (x, y): where a car or a pedestrian walks to. */
+export function nearestRoadPoint(x, y) {
+  const nx = nearestLine(x);
+  const ny = nearestLine(y);
+  // Prefer the closer axis: drive along the road that is nearer.
+  return Math.abs(x - nx) < Math.abs(y - ny) ? { x: nx, y } : { x, y: ny };
+}
+
+/** A random point on a road, for spawning traffic and pedestrians. */
+export function randomRoadPoint(random) {
+  const lines = roadCentres();
+  if (random.chance(0.5)) {
+    return {
+      x: random.pick(lines) + random.range(-ROAD_HALF + 12, ROAD_HALF - 12),
+      y: random.range(60, WORLD.beachY - 60),
+    };
+  }
+  return {
+    x: random.range(60, WORLD.size - 60),
+    y: random.pick(lines) + random.range(-ROAD_HALF + 12, ROAD_HALF - 12),
+  };
+}
+
+/** A random sidewalk point near a road, for spawning pedestrians. */
+export function randomSidewalkPoint(random) {
+  const p = randomRoadPoint(random);
+  const off = ROAD_HALF + 8;
+  if (random.chance(0.5)) {
+    return { x: p.x, y: p.y + (random.chance(0.5) ? off : -off) };
+  }
+  return { x: p.x + (random.chance(0.5) ? off : -off), y: p.y };
+}
+
+export { isOnRoad, rectOverlapsRoad, roadCentres };
