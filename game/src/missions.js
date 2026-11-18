@@ -1,171 +1,190 @@
-// The story: five jobs for Selma Voss, the fixer. Each job is a chain of
-// stages — steal a car, reach a place, lose a tail, hold a spot against armed
-// rivals. A stage completes when its condition is met; the last stage pays
-// out, saves the game and starts the next job. Enemies are armed rivals who
-// shoot at the player.
+// SUNSET RUN — the five story jobs for Dahlia Moreau.
+//
+// Each mission is a small state machine: a stage, a target point on the map,
+// and a timer where the job demands one. Finishing a job pays cash, saves the
+// game and opens the next one. The last job ends the story; the city stays
+// open for free roam afterwards.
 
 import { MISSIONS, PLACES } from './config.js';
-import { addHeat } from './police.js';
 
-const ENEMY_SHOOT_RANGE = 380;
-const ENEMY_SHOOT_INTERVAL = 1.15;
-const ENEMY_HP = 60;
-const DEFEND_RADIUS = 280;
+function freshMission(index) {
+  return {
+    index,
+    stage: 'go',
+    timer: 0,
+    target: null,
+    crates: [],
+    checkpoints: [],
+    done: false,
+  };
+}
 
 export function startMission(state, index) {
   const def = MISSIONS[index];
-  if (!def) return false;
-  state.mission = {
-    index,
-    def,
-    stage: 0,
-    timer: 0,
-    active: true,
-    banner: `${def.title} — ${def.brief}`,
-    bannerUntil: state.time + 6,
-    ambushed: false,
-    spawned: 0,
-  };
-  state.effects.floater(state.player.x, state.player.y - 40, def.title, '#ffc23d');
-  return true;
-}
-
-export function currentStage(state) {
-  if (!state.mission || !state.mission.active) return null;
-  return state.mission.def.stages[state.mission.stage] || null;
-}
-
-export function missionMarker(state) {
-  const stage = currentStage(state);
-  if (!stage || !stage.place) return null;
-  return PLACES[stage.place];
-}
-
-function spawnEnemy(state, x, y) {
-  state.enemies.push({
-    x, y,
-    angle: 0,
-    hp: ENEMY_HP,
-    shootAt: state.time + 0.8 + state.rng.next() * 0.8,
-    speed: 150,
-  });
-}
-
-function spawnAmbush(state, place, count) {
-  for (let i = 0; i < count; i += 1) {
-    spawnEnemy(state, place.x + state.rng.range(-120, 120), place.y + state.rng.range(-120, 120));
+  const m = freshMission(index);
+  if (index === 0) {
+    m.stage = 'go';
+    m.target = { ...PLACES.garage, label: "Dahlia's Garage" };
+  } else if (index === 1) {
+    m.stage = 'pickup';
+    m.target = { ...PLACES.market, label: 'Mercato Aurelia' };
+    m.timer = def.timer;
+  } else if (index === 2) {
+    m.stage = 'evade';
+    m.timer = def.timer;
+    m.target = null;
+  } else if (index === 3) {
+    m.stage = 'collect';
+    m.crates = PLACES.harborCrates.map((c) => ({ ...c, taken: false }));
+    m.target = { ...m.crates[0], label: 'Harbor crate' };
+  } else if (index === 4) {
+    m.stage = 'checkpoints';
+    m.checkpoints = PLACES.checkpoints.map((c) => ({ ...c, done: false }));
+    m.target = { ...m.checkpoints[0], label: 'Checkpoint 1' };
   }
+  state.mission = m;
+  state.message = `${def.name}: ${def.briefing}`;
+  state.messageAt = state.time;
 }
 
-function completeStage(state) {
-  const mission = state.mission;
-  mission.stage += 1;
-  state.audio.pickup();
-  if (mission.stage >= mission.def.stages.length) completeMission(state);
+// Restart the current job from its beginning (after a bust, a waste, or a
+// blown timer), keeping the story where it was.
+export function resetMission(state) {
+  if (state.mission.index < MISSIONS.length) startMission(state, state.mission.index);
 }
 
 function completeMission(state) {
-  const mission = state.mission;
-  state.player.money += mission.def.reward;
-  state.effects.floater(state.player.x, state.player.y - 40, `+$${mission.def.reward}`, '#ffc23d');
-  state.audio.missionDone();
-  mission.active = false;
-  mission.banner = `Job complete — $${mission.def.reward} banked`;
-  mission.bannerUntil = state.time + 4;
-  state.stats.missionsDone += 1;
-  state.saveGame();
-  if (mission.index + 1 >= MISSIONS.length) {
-    state.screen = 'ending';
+  const m = state.mission;
+  const def = MISSIONS[m.index];
+  state.player.cash += def.reward;
+  state.effects.floater(state.player.x, state.player.y - 40, `+$${def.reward}`, '#7ee081');
+  state.audio.mission();
+  state.message = `${def.name} complete — $${def.reward} earned.`;
+  state.messageAt = state.time;
+  m.done = true;
+  // Save AFTER the next job opens, so a continued game resumes the job
+  // Nico still has to do — not the one he just finished.
+  if (m.index + 1 >= MISSIONS.length) {
+    state.storyComplete = true;
+    state.message = 'Story complete — Port Aurelia is yours. Free roam!';
+    state.messageAt = state.time;
+    state.save();
     return;
   }
-  mission.nextAt = state.time + 4;
+  startMission(state, m.index + 1);
+  state.save();
+}
+
+function near(state, x, y, r) {
+  return Math.hypot(state.player.x - x, state.player.y - y) < r;
 }
 
 export function updateMissions(state, dt) {
-  const mission = state.mission;
-  if (!mission) return;
-  if (!mission.active && mission.nextAt && state.time >= mission.nextAt) {
-    mission.nextAt = 0;
-    startMission(state, mission.index + 1);
-    return;
-  }
-  if (!mission.active) return;
-  const stage = currentStage(state);
-  if (!stage) return;
+  const m = state.mission;
+  if (!m || m.index >= MISSIONS.length) return;
+  const p = state.player;
 
-  if (stage.kind === 'steal') {
-    if (state.player.inCar) completeStage(state);
-    return;
-  }
-  if (stage.kind === 'heat') {
-    if (mission.stageStarted !== mission.stage) {
-      mission.stageStarted = mission.stage;
-      state.wanted.stars = stage.stars;
-      state.wanted.heat = 0.5;
-      state.lastCrimeAt = state.time;
+  if (m.index === 0) {
+    if (p.inCar && near(state, PLACES.garage.x, PLACES.garage.y, 70)) completeMission(state);
+  } else if (m.index === 1) {
+    m.timer -= dt;
+    if (m.timer <= 0) {
+      state.message = 'Too slow — the package moved on. Try again.';
+      state.messageAt = state.time;
+      startMission(state, 1);
+      return;
     }
-    if (state.wanted.stars < stage.stars) completeStage(state);
-    return;
-  }
-  if (stage.kind === 'goto') {
-    const place = PLACES[stage.place];
-    const d = Math.hypot(state.player.x - place.x, state.player.y - place.y);
-    if (stage.ambush && !mission.ambushed && d < 260) {
-      mission.ambushed = true;
-      spawnAmbush(state, place, 3);
-      state.effects.floater(place.x, place.y - 40, 'Ambush!', '#ff5a4e');
+    if (m.stage === 'pickup' && near(state, PLACES.market.x, PLACES.market.y, 55)) {
+      m.stage = 'deliver';
+      m.target = { ...PLACES.marina, label: 'Marina Aurelia' };
+      state.message = 'Package picked up — run it to the marina!';
+      state.messageAt = state.time;
+      state.audio.pickup();
+    } else if (m.stage === 'deliver' && near(state, PLACES.marina.x, PLACES.marina.y, 60)) {
+      completeMission(state);
     }
-    if (stage.onFoot && state.player.inCar) return;
-    if (stage.needClear && state.wanted.stars > 0) return;
-    // Places sit at block centres, a short walk from the street: arriving by
-    // car counts from the road, arriving on foot counts from closer in.
-    if (d < (state.player.inCar ? 150 : 78)) completeStage(state);
-    return;
-  }
-  if (stage.kind === 'defend') {
-    const place = PLACES[stage.place];
-    const d = Math.hypot(state.player.x - place.x, state.player.y - place.y);
-    if (mission.spawned < 3 && state.enemies.length < 4) {
-      mission.spawned += 1;
-      spawnEnemy(state, place.x + state.rng.range(-160, 160), place.y + state.rng.range(-160, 160));
+  } else if (m.index === 2) {
+    // The clock only runs while Nico is actually hot: 3 stars or more.
+    if (state.wanted.stars >= 3) {
+      m.timer -= dt;
+      if (m.timer <= 0) completeMission(state);
     }
-    if (d < DEFEND_RADIUS) {
-      mission.timer += dt;
-      if (mission.timer >= stage.seconds) completeStage(state);
+  } else if (m.index === 3) {
+    if (m.stage === 'collect') {
+      for (const crate of m.crates) {
+        if (!crate.taken && near(state, crate.x, crate.y, 55)) {
+          crate.taken = true;
+          state.audio.pickup();
+          state.effects.floater(crate.x, crate.y - 24, 'CRATE', '#7ee081');
+        }
+      }
+      const next = m.crates.find((c) => !c.taken);
+      if (!next) {
+        m.stage = 'deliver';
+        m.target = { ...PLACES.garage, label: "Dahlia's Garage" };
+        state.message = 'All three crates — back to the garage!';
+        state.messageAt = state.time;
+      } else {
+        m.target = { ...next, label: 'Harbor crate' };
+      }
+    } else if (near(state, PLACES.garage.x, PLACES.garage.y, 70)) {
+      completeMission(state);
     }
-    return;
+  } else if (m.index === 4) {
+    if (m.stage === 'checkpoints') {
+      const next = m.checkpoints.find((c) => !c.done);
+      if (next && near(state, next.x, next.y, 65)) {
+        next.done = true;
+        state.audio.pickup();
+        state.effects.floater(next.x, next.y - 24, 'CHECKPOINT', '#7ee081');
+      }
+      const following = m.checkpoints.find((c) => !c.done);
+      if (!following) {
+        m.stage = 'deliver';
+        m.target = { ...PLACES.hideout, label: 'Sunset Hideout' };
+        state.message = 'All checkpoints hit — vanish at the hideout!';
+        state.messageAt = state.time;
+      } else {
+        m.target = { ...following, label: `Checkpoint ${m.checkpoints.indexOf(following) + 1}` };
+      }
+    } else if (near(state, PLACES.hideout.x, PLACES.hideout.y, 70)) {
+      completeMission(state);
+    }
   }
 }
 
-/** Rivals move toward the player and shoot when close enough. */
-export function updateEnemies(state, dt) {
-  for (let i = state.enemies.length - 1; i >= 0; i -= 1) {
-    const enemy = state.enemies[i];
-    if (enemy.hp <= 0) {
-      state.effects.sparks(enemy.x, enemy.y);
-      state.effects.floater(enemy.x, enemy.y - 16, '+6 ammo', '#ffc23d');
-      state.player.ammo += 6;
-      addHeat(state, 0.35);
-      state.enemies.splice(i, 1);
-      continue;
-    }
-    const dx = state.player.x - enemy.x;
-    const dy = state.player.y - enemy.y;
-    const d = Math.hypot(dx, dy);
-    enemy.angle = Math.atan2(dy, dx);
-    if (d > 300) {
-      enemy.x += Math.cos(enemy.angle) * enemy.speed * dt;
-      enemy.y += Math.sin(enemy.angle) * enemy.speed * dt;
-    } else if (state.time >= enemy.shootAt) {
-      enemy.shootAt = state.time + ENEMY_SHOOT_INTERVAL;
-      state.effects.muzzle(enemy.x + Math.cos(enemy.angle) * 18, enemy.y + Math.sin(enemy.angle) * 18, enemy.angle);
-      state.audio.gunshot();
-      if (state.rng.next() < 0.55 && d < ENEMY_SHOOT_RANGE) {
-        state.player.hp -= 7;
-        state.player.invulnerable = Math.max(state.player.invulnerable, 0.3);
-        state.effects.sparks(state.player.x, state.player.y);
-        state.effects.addShake(2);
-      }
-    }
+// The one-line objective the HUD shows.
+export function missionObjectiveText(state) {
+  const m = state.mission;
+  if (!m || m.index >= MISSIONS.length) return 'Free roam — Port Aurelia is yours.';
+  const def = MISSIONS[m.index];
+  if (m.index === 0) return `${def.name}: steal a car, bring it to the garage`;
+  if (m.index === 1) {
+    return m.stage === 'pickup'
+      ? `${def.name}: pick up the package at the market`
+      : `${def.name}: deliver to the marina (${Math.ceil(m.timer)}s)`;
   }
+  if (m.index === 2) {
+    return state.wanted.stars >= 3
+      ? `${def.name}: stay free — ${Math.ceil(m.timer)}s left`
+      : `${def.name}: get to 3 stars first`;
+  }
+  if (m.index === 3) {
+    const left = m.crates.filter((c) => !c.taken).length;
+    return m.stage === 'collect'
+      ? `${def.name}: collect harbor crates (${3 - left}/3)`
+      : `${def.name}: return to the garage`;
+  }
+  if (m.stage === 'checkpoints') {
+    const done = m.checkpoints.filter((c) => c.done).length;
+    return `${def.name}: checkpoints (${done}/3)`;
+  }
+  return `${def.name}: escape to the hideout`;
+}
+
+// The map point the waypoint arrow and minimap should point at, or null.
+export function missionTarget(state) {
+  const m = state.mission;
+  if (!m || m.index >= MISSIONS.length) return null;
+  return m.target;
 }

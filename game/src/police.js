@@ -1,49 +1,57 @@
-// The Velmora PD: the wanted level, police pursuit cars and the foot officers
-// who make the arrest. Stars 0..5; crimes add heat inside the current star,
-// and heat cools off when the player stays clean and out of sight. Police cars
-// chase on the roads; when the player is on foot, officers get out and run
-// them down.
+// SUNSET RUN — the wanted level and Aurelia PD.
+//
+// Crimes fill a heat bar; a full bar earns another star, up to five. Heat
+// cools off only when Nico has been clean for a while and no police car can
+// see him. Each star puts more interceptors on the road, and they get faster.
+// When Nico is on foot and close, an officer gets out and runs him down: one
+// touch is an arrest.
 
-import { PALETTE, WANTED, WORLD } from './config.js';
+import { PALETTE, PLACES, WANTED } from './config.js';
 import { nearestRoadPoint, randomRoadPoint, resolveCircle } from './world.js';
 import { applyCarControls, createCar, gridDriveControls } from './vehicles.js';
+import { damagePlayer } from './player.js';
 
-const FOOT_COP_SPEED = 250;
+const FOOT_COP_SPEED = 255;
 const FOOT_COP_HP = 50;
-const ARREST_RANGE = 20;
 
 /** Add heat from a crime; a full bar of heat earns another star. */
 export function addHeat(state, amount) {
-  if (state.wanted.stars >= WANTED.maxStars) return;
-  state.wanted.heat += amount;
+  const w = state.wanted;
+  if (w.stars >= WANTED.maxStars) return;
+  w.heat += amount;
   state.lastCrimeAt = state.time;
-  while (state.wanted.heat >= 1 && state.wanted.stars < WANTED.maxStars) {
-    state.wanted.heat -= 1;
-    state.wanted.stars += 1;
-    state.effects.floater(state.player.x, state.player.y - 30, `WANTED ${state.wanted.stars}★`, '#ff5a4e');
+  while (w.heat >= 1 && w.stars < WANTED.maxStars) {
+    w.heat -= 1;
+    w.stars += 1;
+    state.effects.floater(
+      state.player.x,
+      state.player.y - 32,
+      `WANTED ${w.stars}★`,
+      '#ff5a4e',
+    );
+    state.audio.sirenBlip();
   }
 }
 
-/** Cool the heat down when the player has been clean for a while. Heat is the
- * bar inside the current star, and it builds toward the first star too: it
- * must only fall here, never be wiped, or a crime could never earn a star. */
+/** Cool the heat down when the player has been clean for a while. */
 export function decayWanted(state, dt) {
   const w = state.wanted;
-  if (state.time - state.lastCrimeAt < 4) return;
+  // No cooling during a spree: heat only decays once Nico has been clean for
+  // a while, at zero stars just as at five — otherwise a few quick crimes
+  // could never add up to the first star.
+  if (state.time - state.lastCrimeAt < WANTED.cleanDelay) return;
   // Heat only cools while no police car can see the player.
   for (const car of state.cars) {
     if (car.kind !== 'police' || car.hp <= 0) continue;
-    if (Math.hypot(car.x - state.player.x, car.y - state.player.y) < 320) return;
+    if (Math.hypot(car.x - state.player.x, car.y - state.player.y) < WANTED.seeRange) return;
   }
   w.heat -= WANTED.decayPerSecond * dt;
-  if (w.heat > 0) return;
-  // The bar emptied: lose a star (and start the next one part-full), or sit
-  // clean at zero stars with no heat left to lose.
-  if (w.stars > 0) {
-    w.stars -= 1;
-    w.heat = w.stars > 0 ? 0.6 : 0;
-  } else {
+  if (w.heat <= 0) {
     w.heat = 0;
+    if (w.stars > 0) {
+      w.stars -= 1;
+      w.heat = w.stars > 0 ? 0.6 : 0;
+    }
   }
 }
 
@@ -51,24 +59,25 @@ function policeTarget(state) {
   return WANTED.policePerStar[state.wanted.stars] || 0;
 }
 
-// A point on a road a few blocks from the player, never on top of them.
-function roadPointAwayFromPlayer(state) {
+function spawnPoliceCar(state) {
+  // Appear on a road a few blocks away from the player, never on top of them.
   for (let tries = 0; tries < 12; tries += 1) {
-    const p = randomRoadPoint(state.rng);
+    const p = randomRoadPoint(state.rng, state.city);
     const d = Math.hypot(p.x - state.player.x, p.y - state.player.y);
-    if (d >= 380 && d <= 700) return p;
+    if (d < 380 || d > 700) continue;
+    const car = createCar('interceptor', p.x, p.y, 0, PALETTE.policeCar);
+    car.driver = 'police';
+    car.siren = true;
+    state.cars.push(car);
+    return car;
   }
   return null;
 }
 
-function spawnPoliceCar(state) {
-  const p = roadPointAwayFromPlayer(state);
-  if (!p) return null;
-  const car = createCar('police', p.x, p.y, 0, PALETTE.policeCar);
-  car.driver = 'police';
-  car.siren = true;
-  state.cars.push(car);
-  return car;
+// One interceptor for a staged scene (the chase screenshot): same spawn rule,
+// exported so shots.js can place the pursuit before the frame is taken.
+export function spawnPoliceCarForShot(state) {
+  return spawnPoliceCar(state);
 }
 
 function spawnFootCop(state, car) {
@@ -82,19 +91,18 @@ function spawnFootCop(state, car) {
   });
 }
 
-/** Steer a police car at the player: on the road grid from far (so it never
- * cuts across a block into a building), straight at them once close. */
-function pursuitControls(state, car, dt) {
+/** Steer a police car at the player: on the road grid from far away, so it
+ * never cuts across a block into a building, straight at them once close. */
+function pursuitControls(state, car) {
   const px = state.player.x;
   const py = state.player.y;
   const dist = Math.hypot(px - car.x, py - car.y);
-  if (dist > 240) {
-    const road = nearestRoadPoint(px, py);
+  if (dist > 260) {
+    const road = nearestRoadPoint(state.city, px, py);
     return gridDriveControls(state, car, road.x, road.y);
   }
-  // Close in: leave the grid behind and run the player down.
   car.target = null;
-  // Lead the target a little.
+  // Lead the target a little, so a fast player cannot just out-turn the chase.
   const lead = 0.35;
   const tx = px + (state.player.vx || 0) * lead;
   const ty = py + (state.player.vy || 0) * lead;
@@ -103,11 +111,31 @@ function pursuitControls(state, car, dt) {
   while (diff > Math.PI) diff -= Math.PI * 2;
   while (diff < -Math.PI) diff += Math.PI * 2;
   const maxSpeed = WANTED.policeSpeed[state.wanted.stars] || 300;
-  return {
-    throttle: Math.abs(car.speed) < maxSpeed ? 1 : 0.25,
-    steer: Math.max(-1, Math.min(1, diff * 2.4)),
-    brake: 0,
-  };
+  const throttle = Math.abs(car.speed) < maxSpeed ? 1 : 0.25;
+  return { throttle, steer: Math.max(-1, Math.min(1, diff * 2.4)), brake: 0 };
+}
+
+function bustPlayer(state) {
+  const p = state.player;
+  const cut = Math.floor(p.cash * WANTED.bustCut);
+  p.cash -= cut;
+  p.hp = 100;
+  if (p.inCar && p.car) {
+    p.car.driver = 'none';
+    p.car.speed = 0;
+    p.car = null;
+    p.inCar = false;
+  }
+  p.x = PLACES.policeStation.x;
+  p.y = PLACES.policeStation.y;
+  state.wanted.stars = 0;
+  state.wanted.heat = 0;
+  for (const car of state.cars) {
+    if (car.kind === 'police') car.hp = 0;
+  }
+  state.cops.length = 0;
+  state.mode = 'busted';
+  state.audio.missionFail();
 }
 
 export function updatePolice(state, dt) {
@@ -132,18 +160,30 @@ export function updatePolice(state, dt) {
     const dist = Math.hypot(state.player.x - car.x, state.player.y - car.y);
     if (dist > 1100) {
       // Lost the trail: reappear on a road a few blocks from the player.
-      const p = roadPointAwayFromPlayer(state);
-      if (p) {
+      for (let tries = 0; tries < 12; tries += 1) {
+        const p = randomRoadPoint(state.rng, state.city);
+        const d = Math.hypot(p.x - state.player.x, p.y - state.player.y);
+        if (d < 380 || d > 700) continue;
         car.x = p.x;
         car.y = p.y;
+        break;
       }
       car.speed = 0;
       car.stuck = 0;
       continue;
     }
+    // Ramming the player hurts: a fast police car is a weapon.
+    if (dist < car.radius + state.player.radius + 4 && Math.abs(car.speed) > 180) {
+      if (state.player.inCar) {
+        state.player.car.hp -= 12;
+      } else {
+        damagePlayer(state, 18);
+        state.effects.sparks(state.player.x, state.player.y);
+      }
+      car.speed *= 0.4;
+    }
     // Stuck against a building while chasing: back out and try another angle
-    // instead of pushing the same wall forever. car.stuck is negative while
-    // the car is backing up, positive while it is pinned.
+    // instead of pushing the same wall forever.
     if (car.stuck < 0) {
       car.stuck += dt;
       applyCarControls(state, car, { throttle: 0, steer: 1, brake: 0 }, dt);
@@ -158,12 +198,12 @@ export function updatePolice(state, dt) {
     } else {
       car.stuck = 0;
     }
-    if (!state.player.inCar && dist < 150) {
+    if (!state.player.inCar && dist < 160) {
       // On foot and close: an officer gets out and chases on foot.
       car.speed = Math.max(0, car.speed - 400 * dt);
       if (!state.cops.some((c) => c.carId === car.id)) spawnFootCop(state, car);
     } else {
-      const controls = pursuitControls(state, car, dt);
+      const controls = pursuitControls(state, car);
       applyCarControls(state, car, controls, dt);
     }
   }
@@ -191,9 +231,9 @@ export function updatePolice(state, dt) {
     const dx = state.player.x - cop.x;
     const dy = state.player.y - cop.y;
     const d = Math.hypot(dx, dy);
-    if (d < ARREST_RANGE) {
-      state.pendingBust = true;
-      continue;
+    if (d < 20) {
+      bustPlayer(state);
+      return;
     }
     cop.angle = Math.atan2(dy, dx);
     cop.x += Math.cos(cop.angle) * FOOT_COP_SPEED * dt;

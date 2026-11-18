@@ -1,34 +1,17 @@
-# VELMORA HEAT
+# SUNSET RUN — Port Aurelia
 
 [![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![rank](https://make.fun/badge/gta6-01/nangpin23-design/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/nangpin23-design/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-An original open-world crime game in the spirit of GTA 6, built for make.fun's
-"Make GTA 6" bounty. Explore the sun-soaked bay city of Velmora on foot and by
-car, steal rides, outrun the Velmora PD, and run five jobs for the fixer Selma
-Voss — from a first stolen car to the Meridian Casino vault.
+An original open-world crime game in the spirit of GTA 6 — entry for make.fun's "Make GTA 6" bounty, $1,666 in USDC.
 
-## Play
+**Port Aurelia** is a sun-soaked harbor city, and **Nico Ferrante** is the wheelman who owes the fixer **Dahlia Moreau** five jobs. Explore the city on foot and by car, steal rides, outrun Aurelia PD under a 0–5 star wanted level, and run the story: five missions from a first stolen car to the Sunset Run itself.
 
-Serve `game/` with any static server (for example `node serve.ts`) and open
-http://localhost:8080 in a desktop browser. No network requests, no build step.
+- A living city: traffic on the road grid, pedestrians on the sidewalks, a harbor, a marina, a market and a hill district
+- Wanted level with police pursuit cars and foot officers who arrest on touch
+- Five story missions with objectives, timers, rewards and a save system
+- Combat on foot (pistol), car chases, crashes, and procedural WebAudio sound
+- HUD with cash, stars, objective, health, ammo, speed and a live minimap
 
-- **WASD / arrows** — walk and drive (W accelerate, S brake/reverse, A/D steer)
-- **E** — steal a car / get out
-- **Mouse** — aim, **click** — shoot, **F** — punch, **1/2** — switch weapon
-- **Shift** — run, **Space** — handbrake, **P** — pause, **M** — mute
-
-## The city
-
-- A full road grid with traffic, pedestrians, a beach, a marina, a pier and an
-  airfield — all of it original, nothing from any commercial game.
-- A wanted system: crimes raise your heat, the police chase you in cars and on
-  foot, and losing them is a skill of its own.
-- Five story jobs with briefings, objectives, ambushes and a getaway finale,
-  plus free roam, a minimap, a HUD and a save that keeps your money and jobs.
-
-## Entry
-
-`main.ts` (Node 22, standard library only) copies `game/` and `screenshots/` to
-the output directory and writes `dossier.json` with the kit's vendored library.
+Play it: serve `game/` with any static server (`node serve.ts` opens it at http://localhost:8080) and open `game/index.html` in desktop Chrome. No network requests — every file the game loads lives under `game/`.

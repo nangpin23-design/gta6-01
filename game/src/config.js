@@ -1,236 +1,148 @@
-// VELMORA HEAT — every number, name and place the game is built from.
+// SUNSET RUN — tuning, palette and mission definitions.
 //
-// Velmora is a sun-soaked bay city: a road grid, a beach and a marina along the
-// south shore, a casino, docks, a market, a garage, a safehouse and an airfield.
-// The layout values below are the whole map; the modules that build the city,
-// drive the traffic and run the story all read from here.
+// Every number in this file is a design choice for Port Aurelia: a sun-soaked
+// harbor city that fits on one screen of streets at a time. Nothing here comes
+// from another game; the names, places and values are this entry's own.
 
-export const GAME_NAME = 'VELMORA HEAT';
-export const GAME_TAGLINE = 'Steal it. Drive it. Lose the heat.';
-export const CITY_NAME = 'Velmora';
-
-// The map is a square crossed by a road grid; the beach and the water run
-// along the south edge.
 export const WORLD = {
-  size: 2600, // the square's side, in world units
-  block: 260, // a city block's side
-  road: 52, // a road's width
-  beachY: 2320, // sand starts here
-  waterY: 2440, // open water starts here
+  width: 2400,
+  height: 1800,
+  roadSpacing: 300,
+  roadWidth: 64,
+  // The harbor water starts here and runs to the south edge of the map.
+  waterY: 1680,
+  // Seeded city layout: the same seed always builds the same Port Aurelia.
+  seed: 20261118,
 };
 
-// The logical view the renderer scales to fit the window.
-export const VIEW = { width: 1280, height: 800 };
+export const PALETTE = {
+  ground: '#d9b380',
+  grass: '#8aa860',
+  asphalt: '#413c39',
+  roadEdge: '#c9b18a',
+  roadLine: '#f2d06b',
+  sidewalk: '#b8a888',
+  water: '#2f7d9c',
+  waterDeep: '#256a86',
+  pier: '#8a6b4f',
+  building: ['#c96f4a', '#d9a05b', '#7d8aa0', '#a8677a', '#5f8a6d', '#b5b0a0'],
+  roof: '#6b5a48',
+  glass: '#9fc4d4',
+  tree: '#4f7a3d',
+  player: '#e8b13c',
+  playerDark: '#8a5a1d',
+  policeCar: '#20242c',
+  policeLight: '#e84a4a',
+  cop: '#2c4a7a',
+  ped: ['#c94f4f', '#4f7ac9', '#6aa84f', '#c9a44f', '#8a5fa8', '#4fb3a9'],
+  beacon: '#ffcf3d',
+  danger: '#ff5a4e',
+  money: '#7ee081',
+};
 
-// Dax Marlowe on foot.
+// Named places the missions and the HUD point at.
+export const PLACES = {
+  garage: { name: "Dahlia's Garage", x: 450, y: 1050 },
+  market: { name: 'Mercato Aurelia', x: 1350, y: 450 },
+  marina: { name: 'Marina Aurelia', x: 1650, y: 1650 },
+  policeStation: { name: 'Aurelia PD', x: 1050, y: 450 },
+  hospital: { name: 'St. Sol Hospital', x: 1950, y: 450 },
+  hideout: { name: 'Sunset Hideout', x: 2250, y: 1650 },
+  harborCrates: [
+    { x: 750, y: 1650 },
+    { x: 1350, y: 1650 },
+    { x: 1950, y: 1650 },
+  ],
+  checkpoints: [
+    { x: 2250, y: 150 },
+    { x: 150, y: 1650 },
+    { x: 2250, y: 1650 },
+  ],
+};
+
 export const PLAYER = {
+  walkSpeed: 235,
   radius: 13,
-  walkSpeed: 205, // unhurried
-  runSpeed: 315, // holding Shift
-  hp: 100,
-  punchDamage: 14,
-  punchRange: 32,
-  punchArc: 1.2,
+  maxHp: 100,
+  maxAmmo: 48,
+  startAmmo: 24,
+  fireRate: 0.25,
+  bulletRange: 430,
+  bulletDamage: 25,
+  arrestRange: 20,
+  enterRange: 46,
 };
 
-// How every car in Velmora drives.
-export const CAR = {
-  length: 46,
-  width: 22,
-  accel: 340,
-  brake: 520,
-  reverseAccel: 200,
-  maxSpeed: 560,
-  maxReverse: 170,
-  steer: 2.6,
-  grip: 4.2,
-  driftGrip: 1.4, // while the handbrake is down
-  hp: 100,
+// Car models: name, top speed, acceleration, turning and toughness.
+export const CAR_MODELS = {
+  cometa: { name: 'Cometa', color: '#e8c93c', topSpeed: 430, accel: 380, turn: 2.7, hp: 100 },
+  falco: { name: 'Falco', color: '#4f7ac9', topSpeed: 470, accel: 420, turn: 2.8, hp: 100 },
+  vela: { name: 'Vela', color: '#c94f6d', topSpeed: 560, accel: 520, turn: 3.0, hp: 80 },
+  toro: { name: 'Toro', color: '#5f8a3d', topSpeed: 520, accel: 560, turn: 2.6, hp: 130 },
+  bisonte: { name: 'Bisonte', color: '#8a7a5f', topSpeed: 360, accel: 300, turn: 2.2, hp: 180 },
+  interceptor: { name: 'PD Interceptor', color: '#20242c', topSpeed: 540, accel: 560, turn: 3.1, hp: 140 },
 };
 
-// The wanted level: stars 0..5. Heat is 0..1 inside the current star; crimes
-// add heat, and a full bar earns another star.
 export const WANTED = {
   maxStars: 5,
-  decayPerSecond: 0.045, // while clean and out of sight
-  heatPerTheft: 0.55,
-  heatPerShot: 0.22,
-  heatPerKill: 0.8,
-  heatPerCopRam: 0.35,
-  policePerStar: [0, 2, 3, 4, 6, 8],
-  policeSpeed: [0, 300, 330, 365, 400, 440],
+  policePerStar: [0, 1, 2, 3, 4, 6],
+  policeSpeed: [0, 300, 325, 350, 380, 410],
+  decayPerSecond: 0.05,
+  cleanDelay: 5,
+  seeRange: 350,
+  heat: { steal: 0.3, shoot: 0.08, killPed: 0.5, hitPed: 0.4, killCop: 0.6 },
+  bustCut: 0.15,
+  wastedCut: 0.1,
 };
 
-// Traffic and pedestrians on the streets.
-export const TRAFFIC = { cars: 14, parked: 10, peds: 26 };
-export const POLICE_STATION = { x: 494, y: 1118 };
-export const HOSPITAL = { x: 1430, y: 2054 };
+export const TRAFFIC = {
+  count: 14,
+  speedMin: 120,
+  speedMax: 185,
+};
 
-// Named places (x, y in world units). Each sits at a block centre — the middle
-// of a city block, clear of the roads — so its building never blocks a street
-// and the player can always reach it. Missions and the minimap use these.
-const PLACE_ROWS = [
-  ['garage', 2054, 806, 'Voss Garage'],
-  ['market', 1118, 1118, 'Marlin Market'],
-  ['docks', 2366, 2054, 'Velmora Docks'],
-  ['safehouse', 494, 494, 'Safehouse'],
-  ['casino', 1430, 806, 'Meridian Casino'],
-  ['airfield', 2260, 494, 'Velmora Airfield'],
-  ['police', 494, 1118, 'Velmora PD'],
-  ['hospital', 1430, 2054, 'St. Anselm Hospital'],
-  ['pier', 806, 2400, 'Sunset Pier'],
-  ['plaza', 1118, 806, 'Sol Plaza'],
-];
-export const PLACES = Object.fromEntries(
-  PLACE_ROWS.map(([key, x, y, label]) => [key, { x, y, label }]),
-);
+export const PEDS = {
+  count: 24,
+  walkMin: 42,
+  walkMax: 72,
+  fleeSpeed: 150,
+};
 
-// The story: five jobs for Selma Voss, the fixer. Each job is a chain of
-// stages; a stage is a place to reach, an action to do there, or a tail to lose.
+// The five story jobs. Each pays cash; the last one ends the story, and the
+// city stays open for free roam afterwards.
 export const MISSIONS = [
   {
-    id: 'first-wheels',
-    title: 'Job 1 — First Wheels',
-    brief: 'Selma Voss needs a car, no questions. Steal any ride and bring it to the garage.',
+    id: 'first-keys',
+    name: 'First Keys',
+    briefing: "Dahlia needs a car. Steal any ride and bring it to the garage.",
+    reward: 150,
+  },
+  {
+    id: 'the-package',
+    name: 'The Package',
+    briefing: 'Pick up the package at Mercato Aurelia, then run it to the marina. 100 seconds.',
+    reward: 250,
+    timer: 100,
+  },
+  {
+    id: 'hot-pursuit',
+    name: 'Hot Pursuit',
+    briefing: 'Get to 3 stars, then stay free for 45 seconds. Do not get busted.',
+    reward: 300,
+    timer: 45,
+  },
+  {
+    id: 'harbor-lights',
+    name: 'Harbor Lights',
+    briefing: 'Three crates are waiting on the harbor. Collect them all, then return to the garage.',
     reward: 400,
-    stages: [
-      {
-        kind: 'steal',
-        text: 'Steal any car (walk up and press E)',
-      },
-      {
-        kind: 'goto',
-        place: 'garage',
-        text: 'Deliver the car to Voss Garage',
-      },
-    ],
   },
   {
-    id: 'the-courier',
-    title: 'Job 2 — The Courier',
-    brief: 'A package is waiting at Marlin Market. Collect it on foot, then run it to the docks. The Marlins will not wave you through.',
-    reward: 700,
-    stages: [
-      {
-        kind: 'goto',
-        place: 'market',
-        onFoot: true,
-        text: 'Pick up the package at Marlin Market',
-      },
-      {
-        kind: 'goto',
-        place: 'docks',
-        ambush: true,
-        text: 'Deliver the package to Velmora Docks',
-      },
-    ],
-  },
-  {
-    id: 'heat-wave',
-    title: 'Job 3 — Heat Wave',
-    brief: 'The whole department is on your tail. Lose the heat and reach the safehouse in one piece.',
-    reward: 1000,
-    stages: [
-      {
-        kind: 'heat',
-        stars: 3,
-        text: 'You are at 3 stars — lose the cops!',
-      },
-      {
-        kind: 'goto',
-        place: 'safehouse',
-        needClear: true,
-        text: 'Reach the Safehouse with no heat',
-      },
-    ],
-  },
-  {
-    id: 'dockside-deal',
-    title: 'Job 4 — Dockside Deal',
-    brief: 'Drive the crew to the docks and watch Selma’s back while the deal goes down. The Marlins bring guns.',
-    reward: 1500,
-    stages: [
-      {
-        kind: 'goto',
-        place: 'docks',
-        text: 'Drive the crew to Velmora Docks',
-      },
-      {
-        kind: 'defend',
-        seconds: 45,
-        text: 'Defend the deal — hold the docks for 45 seconds',
-      },
-      {
-        kind: 'goto',
-        place: 'garage',
-        text: 'Get the crew back to Voss Garage',
-      },
-    ],
-  },
-  {
-    id: 'the-velmora-job',
-    title: 'Job 5 — The Velmora Job',
-    brief: 'The Meridian Casino vault. One night, one crew, one clean getaway to the airfield. This is the one they will sing about.',
-    reward: 5000,
-    stages: [
-      {
-        kind: 'goto',
-        place: 'casino',
-        text: 'Reach the Meridian Casino',
-      },
-      {
-        kind: 'defend',
-        seconds: 30,
-        text: 'Crack the vault — hold the casino for 30 seconds',
-      },
-      {
-        kind: 'goto',
-        place: 'airfield',
-        text: 'Escape to Velmora Airfield',
-      },
-    ],
+    id: 'sunset-run',
+    name: 'The Sunset Run',
+    briefing: 'Three checkpoints, one sunset. Hit them all, then vanish at the hideout.',
+    reward: 600,
   },
 ];
 
-// Palette: a sun-soaked modern bay city at golden hour.
-const PALETTE_ROWS = [
-  ['grass', '#7fae5a'],
-  ['grassDark', '#74a24f'],
-  ['sand', '#e8d29a'],
-  ['water', '#2e7fa8'],
-  ['waterDeep', '#256b8f'],
-  ['asphalt', '#3d3f46'],
-  ['asphaltDark', '#35373e'],
-  ['sidewalk', '#9a9a92'],
-  ['curb', '#c9c9bd'],
-  ['line', '#e8e4c8'],
-  ['crosswalk', '#d8d8cc'],
-  ['policeCar', '#e8e8e8'],
-  ['policeTrim', '#1c3a6e'],
-  ['hudBg', 'rgba(12, 16, 26, 0.72)'],
-  ['hudText', '#f2ead8'],
-  ['hudAccent', '#ffc23d'],
-  ['hudDanger', '#ff5a4e'],
-  ['minimapWater', '#2e7fa8'],
-  ['minimapRoad', '#c9c9bd'],
-  ['minimapBlock', '#5d7a48'],
-  ['minimapPlayer', '#ffc23d'],
-  ['minimapPolice', '#ff5a4e'],
-  ['minimapMission', '#ffe14d'],
-];
-export const PALETTE = {
-  ...Object.fromEntries(PALETTE_ROWS),
-  buildingRoof: ['#c96f4a', '#b8563f', '#d9a05b', '#7d9bb5', '#a8709e', '#5f8f6a', '#8a6f4d'],
-  carColors: ['#c0392b', '#2e6fb0', '#e0a030', '#e8e8e8', '#3a3a3a', '#7d4a9e', '#2e8b6a', '#d35400'],
-};
-
-// Weapons.
-export const WEAPONS = {
-  fists: { name: 'Fists', damage: 14, rate: 0.45, range: 34, ammo: Infinity },
-  pistol: { name: 'Pistol', damage: 26, rate: 0.28, range: 420, ammo: 24, pickupAmmo: 12 },
-};
-
-// Save key in localStorage.
-export const SAVE_KEY = 'velmora-heat-save-v1';
-
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+export const SAVE_KEY = 'sunset-run-save-v1';
