@@ -1,226 +1,175 @@
-// SUNSET RUN — Nico Ferrante on foot and behind the wheel.
-//
-// On foot Nico walks where the keys point, aims with the mouse and shoots with
-// a click. Near a car, E slides him into the driver's seat; E again steps him
-// back out onto the road. Getting into a traffic car is a crime: the city
-// notices, and the wanted level climbs.
+// NEON TIDE — Rook Delgado, on foot and behind the wheel. On foot he walks,
+// runs, punches and shoots his pistol at the mouse; in a car he drives it, and
+// stepping out leaves the car where it stands.
 
-import { PLAYER, PLACES, WANTED } from './config.js';
-import { resolveCircle } from './world.js';
-import { addHeat } from './police.js';
-import { applyCarControls } from './vehicles.js';
+import { CAR, KEYS, PLAYER } from './config.js';
+import { Car } from './vehicles.js';
 
-export function createPlayer(x, y) {
-  return {
-    x,
-    y,
-    angle: -Math.PI / 2,
-    vx: 0,
-    vy: 0,
-    hp: PLAYER.maxHp,
-    cash: 0,
-    inCar: false,
-    car: null,
-    ammo: PLAYER.startAmmo,
-    fireCooldown: 0,
-    radius: PLAYER.radius,
-  };
-}
+export class Player {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.angle = -Math.PI / 2;
+    this.hp = PLAYER.maxHp;
+    this.cash = 0;
+    this.ammo = PLAYER.pistolAmmo;
+    this.reloadUntil = 0;
+    this.inCar = null;
+    this.shotsFired = 0;
+    this.punchCooldown = 0;
+    this.hurtFlash = 0;
+  }
 
-// The nearest car the player could steal, within reach and not police-driven.
-export function nearestStealableCar(state) {
-  let best = null;
-  let bestD = PLAYER.enterRange;
-  for (const car of state.cars) {
-    if (car.hp <= 0) continue;
-    if (car.driver === 'police') continue;
-    if (state.player.car === car) continue;
-    const d = Math.hypot(car.x - state.player.x, car.y - state.player.y);
-    if (d < bestD) {
-      bestD = d;
-      best = car;
+  get radius() {
+    return PLAYER.radius;
+  }
+
+  get speed() {
+    return this.inCar ? Math.abs(this.inCar.speed) : 0;
+  }
+
+  update(dt, input, world, camera) {
+    this.punchCooldown = Math.max(0, this.punchCooldown - dt);
+    this.hurtFlash = Math.max(0, this.hurtFlash - dt);
+    if (this.inCar) {
+      this.updateDriving(dt, input, world);
+    } else {
+      this.updateOnFoot(dt, input, world, camera);
     }
   }
-  return best;
-}
 
-function stepOut(state) {
-  const p = state.player;
-  const car = p.car;
-  // Step out to the car's left, clear of the road's traffic.
-  const side = car.angle + Math.PI / 2;
-  p.x = car.x + Math.cos(side) * 30;
-  p.y = car.y + Math.sin(side) * 30;
-  p.angle = car.angle;
-  p.inCar = false;
-  p.car = null;
-  car.driver = 'none';
-  car.speed = 0;
-  resolveCircle(state.city, p);
-}
-
-function stepIn(state, car) {
-  const p = state.player;
-  p.inCar = true;
-  p.car = car;
-  car.driver = 'player';
-  p.x = car.x;
-  p.y = car.y;
-  p.angle = car.angle;
-  if (car.kind !== 'police') {
-    addHeat(state, WANTED.heat.steal);
-    state.effects.floater(p.x, p.y - 34, 'CAR STOLEN', '#ffcf3d');
-    state.audio.crash();
-  }
-}
-
-// A pistol shot toward the mouse: the first thing in the line of fire within
-// range takes the hit — a pedestrian, a police car, or a traffic car.
-function shoot(state) {
-  const p = state.player;
-  if (p.ammo <= 0 || p.fireCooldown > 0) return;
-  p.ammo -= 1;
-  p.fireCooldown = PLAYER.fireRate;
-  state.lastShotAt = state.time;
-  state.audio.shot();
-  addHeat(state, WANTED.heat.shoot);
-  const mx = state.input.mouse.worldX;
-  const my = state.input.mouse.worldY;
-  const aim = Math.atan2(my - p.y, mx - p.x);
-  p.angle = aim;
-  const ex = p.x + Math.cos(aim) * PLAYER.bulletRange;
-  const ey = p.y + Math.sin(aim) * PLAYER.bulletRange;
-  state.effects.muzzle(p.x + Math.cos(aim) * 18, p.y + Math.sin(aim) * 18, aim);
-  state.effects.tracer(p.x, p.y, ex, ey);
-
-  let bestD = PLAYER.bulletRange;
-  let bestHit = null;
-  const consider = (x, y, radius, target) => {
-    const dx = x - p.x;
-    const dy = y - p.y;
-    const along = dx * Math.cos(aim) + dy * Math.sin(aim);
-    if (along <= 0 || along > bestD) return;
-    const across = Math.abs(-dx * Math.sin(aim) + dy * Math.cos(aim));
-    if (across < radius + 6) {
-      bestD = along;
-      bestHit = target;
+  updateOnFoot(dt, input, world, camera) {
+    let mx = 0;
+    let my = 0;
+    if (input.down(...KEYS.up)) my -= 1;
+    if (input.down(...KEYS.down)) my += 1;
+    if (input.down(...KEYS.left)) mx -= 1;
+    if (input.down(...KEYS.right)) mx += 1;
+    const moving = mx !== 0 || my !== 0;
+    if (moving) {
+      const len = Math.hypot(mx, my);
+      const running = input.down('ShiftLeft', 'ShiftRight');
+      const speed = running ? PLAYER.runSpeed : PLAYER.walkSpeed;
+      const nx = this.x + (mx / len) * speed * dt;
+      const ny = this.y + (my / len) * speed * dt;
+      const fixed = world.collideCircle(nx, ny, this.radius);
+      this.x = fixed.x;
+      this.y = fixed.y;
+      this.angle = Math.atan2(my, mx);
     }
-  };
-  for (const ped of state.peds) {
-    if (ped.hp > 0) consider(ped.x, ped.y, 11, { type: 'ped', ped });
+    // Aim at the mouse.
+    const worldMouse = camera.toWorld(input.mouseX, input.mouseY);
+    this.aimAngle = Math.atan2(worldMouse.y - this.y, worldMouse.x - this.x);
   }
-  for (const cop of state.cops) {
-    if (cop.hp > 0) consider(cop.x, cop.y, 11, { type: 'cop', cop });
-  }
-  for (const car of state.cars) {
-    if (car.hp > 0 && car !== p.car) consider(car.x, car.y, car.radius, { type: 'car', car });
-  }
-  if (!bestHit) return;
-  const hx = p.x + Math.cos(aim) * bestD;
-  const hy = p.y + Math.sin(aim) * bestD;
-  state.effects.sparks(hx, hy);
-  if (bestHit.type === 'ped') {
-    bestHit.ped.hp = 0;
-    addHeat(state, WANTED.heat.killPed);
-    state.effects.floater(hx, hy - 20, 'DOWN', '#ff5a4e');
-  } else if (bestHit.type === 'cop') {
-    bestHit.cop.hp -= PLAYER.bulletDamage;
-    addHeat(state, WANTED.heat.killCop);
-  } else {
-    bestHit.car.hp -= PLAYER.bulletDamage;
-    if (bestHit.car.hp <= 0) {
-      state.effects.explosion(bestHit.car.x, bestHit.car.y);
-      state.audio.crash();
+
+  updateDriving(dt, input, world) {
+    const car = this.inCar;
+    if (car.cruiseSpeed !== undefined) {
+      // Staged cars (screenshots) hold a steady cruising speed instead of
+      // answering the pedals, so the scene stays composed while the loop runs.
+      car.speed += (car.cruiseSpeed - car.speed) * Math.min(1, 3 * dt);
+      car.x += Math.cos(car.angle) * car.speed * dt;
+      car.y += Math.sin(car.angle) * car.speed * dt;
+      const fixed = world.collideCircle(car.x, car.y, car.radius);
+      car.x = fixed.x;
+      car.y = fixed.y;
+    } else {
+      const throttle = input.down(...KEYS.up) ? 1 : input.down(...KEYS.down) ? -1 : 0;
+      const steer = input.down(...KEYS.left) ? -1 : input.down(...KEYS.right) ? 1 : 0;
+      const handbrake = input.down(...KEYS.handbrake);
+      car.drive(dt, throttle, steer, handbrake);
+      const fixed = world.collideCircle(car.x, car.y, car.radius);
+      if (fixed.x !== car.x || fixed.y !== car.y) {
+        // A hard hit on a building: scrape off speed instead of sticking.
+        if (Math.abs(car.speed) > 260) {
+          car.speed *= 0.55;
+          this.crashed = true;
+        }
+        car.x = fixed.x;
+        car.y = fixed.y;
+      }
     }
+    this.x = car.x;
+    this.y = car.y;
+    this.angle = car.angle;
   }
-}
 
-export function damagePlayer(state, amount) {
-  const p = state.player;
-  if (p.hp <= 0) return;
-  p.hp -= amount;
-  state.effects.shake(6);
-  if (p.hp <= 0) wastePlayer(state);
-}
-
-// Nico goes down: the hospital patches him up for a fee, and the heat is
-// gone — a fresh start, minus a tenth of his cash.
-function wastePlayer(state) {
-  const p = state.player;
-  p.hp = PLAYER.maxHp;
-  const cut = Math.floor(p.cash * WANTED.wastedCut);
-  p.cash -= cut;
-  if (p.inCar && p.car) {
-    p.car.driver = 'none';
-    p.car.speed = 0;
-    p.car = null;
-    p.inCar = false;
+  tryEnterCar(nearbyCar, onSteal) {
+    if (!nearbyCar || this.inCar) return false;
+    if (nearbyCar.kind === 'parked') {
+      nearbyCar.kind = 'player';
+      onSteal();
+    }
+    if (nearbyCar.kind === 'traffic') return false;
+    this.inCar = nearbyCar;
+    this.x = nearbyCar.x;
+    this.y = nearbyCar.y;
+    return true;
   }
-  p.x = PLACES.hospital.x;
-  p.y = PLACES.hospital.y;
-  state.wanted.stars = 0;
-  state.wanted.heat = 0;
-  for (const car of state.cars) {
-    if (car.kind === 'police') car.hp = 0;
+
+  exitCar() {
+    if (!this.inCar) return null;
+    const car = this.inCar;
+    this.inCar = null;
+    const sideX = Math.cos(this.angle + Math.PI / 2);
+    const sideY = Math.sin(this.angle + Math.PI / 2);
+    this.x = car.x + sideX * 34;
+    this.y = car.y + sideY * 34;
+    car.speed = 0;
+    return car;
   }
-  state.cops.length = 0;
-  state.mode = 'wasted';
-  state.audio.missionFail();
-}
 
-export function updatePlayer(state, dt) {
-  const p = state.player;
-  const input = state.input;
-  if (p.fireCooldown > 0) p.fireCooldown -= dt;
-
-  if (p.inCar && p.car) {
-    const car = p.car;
-    const up = input.down('KeyW') || input.down('ArrowUp');
-    const down = input.down('KeyS') || input.down('ArrowDown');
-    const left = input.down('KeyA') || input.down('ArrowLeft');
-    const right = input.down('KeyD') || input.down('ArrowRight');
-    const brake = input.down('Space') ? 1 : 0;
-    const controls = {
-      throttle: up ? 1 : down ? -1 : 0,
-      steer: left ? -1 : right ? 1 : 0,
-      brake,
+  shoot(now, targetX, targetY) {
+    if (this.inCar) return null;
+    if (this.ammo <= 0) return null;
+    if (now < this.reloadUntil) return null;
+    this.ammo -= 1;
+    this.shotsFired += 1;
+    return {
+      x: this.x,
+      y: this.y,
+      angle: Math.atan2(targetY - this.y, targetX - this.x),
+      range: PLAYER.shotRange,
+      damage: PLAYER.shotDamage,
     };
-    // Driving is the same arcade step traffic uses, from vehicles.js.
-    applyCarControls(state, car, controls, dt);
-    p.x = car.x;
-    p.y = car.y;
-    p.angle = car.angle;
-    if (brake && Math.abs(car.speed) > 140) {
-      state.effects.skid(car.x, car.y, car.angle);
+  }
+
+  punch(targets) {
+    if (this.inCar || this.punchCooldown > 0) return null;
+    this.punchCooldown = 0.45;
+    const px = this.x + Math.cos(this.aimAngle) * PLAYER.punchRange;
+    const py = this.y + Math.sin(this.aimAngle) * PLAYER.punchRange;
+    for (const t of targets) {
+      if (t.dead) continue;
+      if (Math.hypot(t.x - px, t.y - py) < (t.radius || 12) + 16) {
+        return t;
+      }
     }
-    if (input.pressed('KeyE')) stepOut(state);
-    return;
+    return null;
   }
 
-  // On foot: walk where the keys point, face the mouse.
-  let mx = 0;
-  let my = 0;
-  if (input.down('KeyW') || input.down('ArrowUp')) my -= 1;
-  if (input.down('KeyS') || input.down('ArrowDown')) my += 1;
-  if (input.down('KeyA') || input.down('ArrowLeft')) mx -= 1;
-  if (input.down('KeyD') || input.down('ArrowRight')) mx += 1;
-  const len = Math.hypot(mx, my);
-  if (len > 0) {
-    p.x += (mx / len) * PLAYER.walkSpeed * dt;
-    p.y += (my / len) * PLAYER.walkSpeed * dt;
+  startReload(now) {
+    if (this.ammo >= PLAYER.pistolAmmo || now < this.reloadUntil) return;
+    this.reloadUntil = now + PLAYER.reloadMs;
   }
-  p.angle = Math.atan2(
-    input.mouse.worldY - p.y,
-    input.mouse.worldX - p.x,
-  );
-  resolveCircle(state.city, p);
 
-  if (input.pressed('KeyE')) {
-    const car = nearestStealableCar(state);
-    if (car) stepIn(state, car);
+  finishReload(now) {
+    if (this.reloadUntil > 0 && now >= this.reloadUntil) {
+      this.ammo = PLAYER.pistolAmmo;
+      this.reloadUntil = 0;
+    }
   }
-  if (input.mouse.clicked) {
-    input.mouse.clicked = false;
-    shoot(state);
+
+  hurt(amount) {
+    this.hp = Math.max(0, this.hp - amount);
+    this.hurtFlash = 0.25;
+  }
+
+  heal(amount) {
+    this.hp = Math.min(PLAYER.maxHp, this.hp + amount);
+  }
+
+  isDown() {
+    return this.hp <= 0;
   }
 }

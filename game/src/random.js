@@ -1,11 +1,8 @@
-// SUNSET RUN — a small seeded random source.
-//
-// The city, traffic and pedestrians all draw from one seeded stream, so the
-// same seed always builds the same Port Aurelia. Gameplay randomness (a
-// pedestrian's next turn, a police spawn point) uses the same stream, which is
-// why a staged screenshot with a fixed seed looks the same every time.
+// NEON TIDE — deterministic randomness. The city is built from one seed, so the
+// same seed always builds the same Calder Bay: screenshots and play-tests are
+// reproducible, and the dossier never changes between runs.
 
-export function makeRng(seed) {
+export function mulberry32(seed) {
   let a = seed >>> 0;
   return function next() {
     a |= 0;
@@ -16,27 +13,31 @@ export function makeRng(seed) {
   };
 }
 
-// A float in [min, max).
-export function range(rng, min, max) {
-  return min + rng() * (max - min);
+export function makeRng(seed) {
+  const next = mulberry32(seed);
+  return {
+    next,
+    range(min, max) {
+      return min + next() * (max - min);
+    },
+    int(min, max) {
+      return Math.floor(min + next() * (max - min + 1));
+    },
+    pick(list) {
+      return list[Math.floor(next() * list.length)];
+    },
+    chance(p) {
+      return next() < p;
+    },
+  };
 }
 
-// An integer in [min, max].
-export function int(rng, min, max) {
-  return Math.floor(range(rng, min, max + 1));
-}
-
-// One element of an array, picked uniformly.
-export function pick(rng, arr) {
-  return arr[Math.floor(rng() * arr.length)];
-}
-
-// True with probability p (0..1).
-export function chance(rng, p) {
-  return rng() < p;
-}
-
-// A random angle in radians.
-export function angle(rng) {
-  return rng() * Math.PI * 2;
+// A tiny hash of a string, for seeding per-object variation from a stable key.
+export function hashSeed(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
 }

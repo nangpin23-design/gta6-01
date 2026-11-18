@@ -1,190 +1,193 @@
-// SUNSET RUN — the five story jobs for Dahlia Moreau.
-//
-// Each mission is a small state machine: a stage, a target point on the map,
-// and a timer where the job demands one. Finishing a job pays cash, saves the
-// game and opens the next one. The last job ends the story; the city stays
-// open for free roam afterwards.
+// NEON TIDE — the story: five jobs from fixer Iris Vane, each a small state
+// machine of steps. A step is a place to reach, a car to steal, crates to lift,
+// a wanted level to hold, or a clock to beat. Finish a job, take the cash, and
+// the next one opens; finish all five and Calder Bay is yours to roam.
 
-import { MISSIONS, PLACES } from './config.js';
+import { LANDMARKS, MISSION_REWARDS } from './config.js';
 
-function freshMission(index) {
-  return {
-    index,
-    stage: 'go',
-    timer: 0,
-    target: null,
-    crates: [],
-    checkpoints: [],
-    done: false,
-  };
-}
+export const MISSION_NAMES = [
+  'First Keys',
+  'The Drop',
+  'Heat Check',
+  'Dockside',
+  'Neon Tide',
+];
 
-export function startMission(state, index) {
-  const def = MISSIONS[index];
-  const m = freshMission(index);
-  if (index === 0) {
-    m.stage = 'go';
-    m.target = { ...PLACES.garage, label: "Dahlia's Garage" };
-  } else if (index === 1) {
-    m.stage = 'pickup';
-    m.target = { ...PLACES.market, label: 'Mercato Aurelia' };
-    m.timer = def.timer;
-  } else if (index === 2) {
-    m.stage = 'evade';
-    m.timer = def.timer;
-    m.target = null;
-  } else if (index === 3) {
-    m.stage = 'collect';
-    m.crates = PLACES.harborCrates.map((c) => ({ ...c, taken: false }));
-    m.target = { ...m.crates[0], label: 'Harbor crate' };
-  } else if (index === 4) {
-    m.stage = 'checkpoints';
-    m.checkpoints = PLACES.checkpoints.map((c) => ({ ...c, done: false }));
-    m.target = { ...m.checkpoints[0], label: 'Checkpoint 1' };
+export const MISSION_BRIEFS = [
+  'Steal a car and bring it to the garage. Iris is waiting.',
+  'Pick up the package at the market, then run it to the marina. 100 seconds.',
+  'The crew needs a distraction: get to 3 stars and stay free for 45 seconds.',
+  'Three crates on the harbour. Lift them all, then bring them to the garage.',
+  'The big one: three checkpoints across the city, then the hideout. $600.',
+];
+
+function missionSteps(index) {
+  switch (index) {
+    case 0:
+      return [
+        { type: 'steal', label: 'Steal a car (walk up and press E)' },
+        { type: 'goto', x: LANDMARKS.garage.x, y: LANDMARKS.garage.y, label: 'Drive to the Garage', radius: 90 },
+      ];
+    case 1:
+      return [
+        { type: 'goto', x: LANDMARKS.market.x, y: LANDMARKS.market.y, label: 'Pick up the package at the Market', radius: 80 },
+        { type: 'goto', x: LANDMARKS.marina.x, y: LANDMARKS.marina.y, label: 'Deliver to the Marina', radius: 90, timer: 100 },
+      ];
+    case 2:
+      return [
+        { type: 'stars', count: 3, label: 'Raise your wanted level to 3 stars' },
+        { type: 'survive', seconds: 45, label: 'Stay free for 45 seconds' },
+      ];
+    case 3:
+      return [
+        { type: 'collect', items: LANDMARKS.harborCrates.map((c) => ({ ...c, taken: false })), label: 'Lift the 3 harbour crates (walk over them)' },
+        { type: 'goto', x: LANDMARKS.garage.x, y: LANDMARKS.garage.y, label: 'Bring the crates to the Garage', radius: 90 },
+      ];
+    case 4:
+      return [
+        { type: 'goto', x: 680, y: 880, label: 'Checkpoint 1 — Old Town', radius: 80 },
+        { type: 'goto', x: 1880, y: 580, label: 'Checkpoint 2 — North Docks', radius: 80 },
+        { type: 'goto', x: 1080, y: 1180, label: 'Checkpoint 3 — Midtown', radius: 80 },
+        { type: 'goto', x: LANDMARKS.hideout.x, y: LANDMARKS.hideout.y, label: 'Reach the Hideout', radius: 90 },
+      ];
+    default:
+      return [];
   }
-  state.mission = m;
-  state.message = `${def.name}: ${def.briefing}`;
-  state.messageAt = state.time;
 }
 
-// Restart the current job from its beginning (after a bust, a waste, or a
-// blown timer), keeping the story where it was.
-export function resetMission(state) {
-  if (state.mission.index < MISSIONS.length) startMission(state, state.mission.index);
-}
-
-function completeMission(state) {
-  const m = state.mission;
-  const def = MISSIONS[m.index];
-  state.player.cash += def.reward;
-  state.effects.floater(state.player.x, state.player.y - 40, `+$${def.reward}`, '#7ee081');
-  state.audio.mission();
-  state.message = `${def.name} complete — $${def.reward} earned.`;
-  state.messageAt = state.time;
-  m.done = true;
-  // Save AFTER the next job opens, so a continued game resumes the job
-  // Nico still has to do — not the one he just finished.
-  if (m.index + 1 >= MISSIONS.length) {
-    state.storyComplete = true;
-    state.message = 'Story complete — Port Aurelia is yours. Free roam!';
-    state.messageAt = state.time;
-    state.save();
-    return;
+export class Missions {
+  constructor() {
+    this.index = 0;
+    this.stepIndex = 0;
+    this.steps = missionSteps(0);
+    this.timer = 0;
+    this.surviveTimer = 0;
+    this.done = false;
+    this.failed = false;
+    this.message = '';
   }
-  startMission(state, m.index + 1);
-  state.save();
-}
 
-function near(state, x, y, r) {
-  return Math.hypot(state.player.x - x, state.player.y - y) < r;
-}
+  get current() {
+    return this.steps[this.stepIndex] || null;
+  }
 
-export function updateMissions(state, dt) {
-  const m = state.mission;
-  if (!m || m.index >= MISSIONS.length) return;
-  const p = state.player;
+  get name() {
+    return MISSION_NAMES[this.index] || 'Free Roam';
+  }
 
-  if (m.index === 0) {
-    if (p.inCar && near(state, PLACES.garage.x, PLACES.garage.y, 70)) completeMission(state);
-  } else if (m.index === 1) {
-    m.timer -= dt;
-    if (m.timer <= 0) {
-      state.message = 'Too slow — the package moved on. Try again.';
-      state.messageAt = state.time;
-      startMission(state, 1);
-      return;
+  get brief() {
+    return MISSION_BRIEFS[this.index] || 'All jobs done. Calder Bay is yours.';
+  }
+
+  get reward() {
+    return MISSION_REWARDS[this.index] || 0;
+  }
+
+  start(index) {
+    this.index = index;
+    this.stepIndex = 0;
+    this.steps = missionSteps(index);
+    this.timer = 0;
+    this.surviveTimer = 0;
+    this.done = false;
+    this.failed = false;
+    this.message = `New job: ${MISSION_NAMES[index]} — $${MISSION_REWARDS[index]}`;
+  }
+
+  objectiveText() {
+    if (this.done) return 'All jobs done — free roam';
+    const step = this.current;
+    if (!step) return 'No active job';
+    let text = `Job ${this.index + 1}/5 · ${this.name}: ${step.label}`;
+    if (step.timer) text += ` — ${Math.max(0, Math.ceil(step.timer - this.timer))}s left`;
+    if (step.type === 'survive') text += ` — ${Math.max(0, Math.ceil(step.seconds - this.surviveTimer))}s left`;
+    if (step.type === 'collect') {
+      const left = step.items.filter((i) => !i.taken).length;
+      text += ` — ${left} left`;
     }
-    if (m.stage === 'pickup' && near(state, PLACES.market.x, PLACES.market.y, 55)) {
-      m.stage = 'deliver';
-      m.target = { ...PLACES.marina, label: 'Marina Aurelia' };
-      state.message = 'Package picked up — run it to the marina!';
-      state.messageAt = state.time;
-      state.audio.pickup();
-    } else if (m.stage === 'deliver' && near(state, PLACES.marina.x, PLACES.marina.y, 60)) {
-      completeMission(state);
+    return text;
+  }
+
+  marker() {
+    if (this.done) return null;
+    const step = this.current;
+    if (!step) return null;
+    if (step.type === 'goto') return { x: step.x, y: step.y };
+    if (step.type === 'collect') {
+      const next = step.items.find((i) => !i.taken);
+      return next ? { x: next.x, y: next.y } : null;
     }
-  } else if (m.index === 2) {
-    // The clock only runs while Nico is actually hot: 3 stars or more.
-    if (state.wanted.stars >= 3) {
-      m.timer -= dt;
-      if (m.timer <= 0) completeMission(state);
+    return null;
+  }
+
+  // Returns 'step' | 'complete' | 'failed' | null.
+  update(dt, game) {
+    if (this.done) return null;
+    const step = this.current;
+    if (!step) return null;
+    if (step.type === 'goto' && step.timer) {
+      this.timer += dt;
+      if (this.timer > step.timer) {
+        this.failed = true;
+        return 'failed';
+      }
     }
-  } else if (m.index === 3) {
-    if (m.stage === 'collect') {
-      for (const crate of m.crates) {
-        if (!crate.taken && near(state, crate.x, crate.y, 55)) {
-          crate.taken = true;
-          state.audio.pickup();
-          state.effects.floater(crate.x, crate.y - 24, 'CRATE', '#7ee081');
+    if (step.type === 'stars') {
+      if (game.police.stars >= step.count) return this.advance();
+      return null;
+    }
+    if (step.type === 'survive') {
+      if (game.police.stars >= 1) {
+        this.surviveTimer += dt;
+        if (this.surviveTimer >= step.seconds) return this.advance();
+      }
+      return null;
+    }
+    if (step.type === 'goto') {
+      const d = Math.hypot(game.player.x - step.x, game.player.y - step.y);
+      if (d < step.radius) return this.advance();
+      return null;
+    }
+    if (step.type === 'collect') {
+      let took = false;
+      for (const item of step.items) {
+        if (item.taken) continue;
+        if (Math.hypot(game.player.x - item.x, game.player.y - item.y) < 55) {
+          item.taken = true;
+          took = true;
         }
       }
-      const next = m.crates.find((c) => !c.taken);
-      if (!next) {
-        m.stage = 'deliver';
-        m.target = { ...PLACES.garage, label: "Dahlia's Garage" };
-        state.message = 'All three crates — back to the garage!';
-        state.messageAt = state.time;
-      } else {
-        m.target = { ...next, label: 'Harbor crate' };
-      }
-    } else if (near(state, PLACES.garage.x, PLACES.garage.y, 70)) {
-      completeMission(state);
+      if (took && step.items.every((i) => i.taken)) return this.advance();
+      return took ? 'step' : null;
     }
-  } else if (m.index === 4) {
-    if (m.stage === 'checkpoints') {
-      const next = m.checkpoints.find((c) => !c.done);
-      if (next && near(state, next.x, next.y, 65)) {
-        next.done = true;
-        state.audio.pickup();
-        state.effects.floater(next.x, next.y - 24, 'CHECKPOINT', '#7ee081');
-      }
-      const following = m.checkpoints.find((c) => !c.done);
-      if (!following) {
-        m.stage = 'deliver';
-        m.target = { ...PLACES.hideout, label: 'Sunset Hideout' };
-        state.message = 'All checkpoints hit — vanish at the hideout!';
-        state.messageAt = state.time;
-      } else {
-        m.target = { ...following, label: `Checkpoint ${m.checkpoints.indexOf(following) + 1}` };
-      }
-    } else if (near(state, PLACES.hideout.x, PLACES.hideout.y, 70)) {
-      completeMission(state);
+    return null;
+  }
+
+  // Called by the game when the player steals a car.
+  onSteal() {
+    const step = this.current;
+    if (step && step.type === 'steal') return this.advance();
+    return null;
+  }
+
+  advance() {
+    this.stepIndex += 1;
+    this.timer = 0;
+    this.surviveTimer = 0;
+    if (this.stepIndex >= this.steps.length) {
+      this.done = true;
+      return 'complete';
     }
+    return 'step';
   }
-}
 
-// The one-line objective the HUD shows.
-export function missionObjectiveText(state) {
-  const m = state.mission;
-  if (!m || m.index >= MISSIONS.length) return 'Free roam — Port Aurelia is yours.';
-  const def = MISSIONS[m.index];
-  if (m.index === 0) return `${def.name}: steal a car, bring it to the garage`;
-  if (m.index === 1) {
-    return m.stage === 'pickup'
-      ? `${def.name}: pick up the package at the market`
-      : `${def.name}: deliver to the marina (${Math.ceil(m.timer)}s)`;
+  // After a job completes, open the next one. Returns false when the story is over.
+  nextJob() {
+    if (this.index + 1 >= MISSION_NAMES.length) {
+      this.done = true;
+      return false;
+    }
+    this.start(this.index + 1);
+    return true;
   }
-  if (m.index === 2) {
-    return state.wanted.stars >= 3
-      ? `${def.name}: stay free — ${Math.ceil(m.timer)}s left`
-      : `${def.name}: get to 3 stars first`;
-  }
-  if (m.index === 3) {
-    const left = m.crates.filter((c) => !c.taken).length;
-    return m.stage === 'collect'
-      ? `${def.name}: collect harbor crates (${3 - left}/3)`
-      : `${def.name}: return to the garage`;
-  }
-  if (m.stage === 'checkpoints') {
-    const done = m.checkpoints.filter((c) => c.done).length;
-    return `${def.name}: checkpoints (${done}/3)`;
-  }
-  return `${def.name}: escape to the hideout`;
-}
-
-// The map point the waypoint arrow and minimap should point at, or null.
-export function missionTarget(state) {
-  const m = state.mission;
-  if (!m || m.index >= MISSIONS.length) return null;
-  return m.target;
 }

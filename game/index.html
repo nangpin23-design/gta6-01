@@ -1,21 +1,17 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="icon" href="data:," />
-    <title>SUNSET RUN — Port Aurelia</title>
-    <link rel="stylesheet" href="./style.css" />
-  </head>
-  <body>
-    <main>
-      <canvas id="game" width="1280" height="800"></canvas>
-      <p class="hint">
-        WASD / arrows — move &amp; drive &nbsp;·&nbsp; Mouse — aim &nbsp;·&nbsp; Click — shoot
-        &nbsp;·&nbsp; E — enter / leave car &nbsp;·&nbsp; Space — handbrake &nbsp;·&nbsp; P — pause
-        &nbsp;·&nbsp; S — save &nbsp;·&nbsp; M — sound
-      </p>
-    </main>
-    <script type="module" src="./src/main.js"></script>
-  </body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NEON TIDE — Calder Bay</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="game" width="1280" height="800"></canvas>
+    <p id="help">WASD move / drive &nbsp;·&nbsp; E steal &amp; enter car &nbsp;·&nbsp; Click shoot &nbsp;·&nbsp; F punch &nbsp;·&nbsp; R reload &nbsp;·&nbsp; S save &nbsp;·&nbsp; P pause</p>
+  </div>
+  <script type="module" src="src/main.js"></script>
+</body>
 </html>
